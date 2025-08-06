@@ -1,268 +1,222 @@
 import streamlit as st
-import plotly.graph_objects as go
-from streamlit_sortables import sort_items
+import pandas as pd
+from pymongo import MongoClient
 
-# --------------------------------------------
-# Scoring function
-# --------------------------------------------
-def calculate_match_score(
-    provider_priorities,
-    provider_comp_range,
-    provider_states,
-    provider_values,
-    job_hours,
-    job_weekend,
-    job_on_call,
-    job_salary_min,
-    job_salary_max,
-    sign_on_bonus,
-    job_state,
-    job_region,
-    job_values
-):
-    # Priority weights
-    weights = {}
-    weight_map = {0: 0.4, 1: 0.3, 2: 0.2, 3: 0.1}
-    for i, p in enumerate(provider_priorities):
-        weights[p] = weight_map[i]
+# MongoDB Setup
+mongo_uri = "mongodb+srv://ankushkumartpss:0R2IwQeyjOywH91G@cluster0.iy27erl.mongodb.net/"
+client = MongoClient(mongo_uri)
+db = client["chess_tournament"]
+results_col = db["match_results"]
+scores_col = db["player_scores"]
 
-    # Work-Life Score
-    work_score = max(0, min(100, (80 - job_hours) * 2.5))
-    if job_weekend:
-        work_score -= 10
-    if job_on_call:
-        work_score -= 10
-    work_score = max(0, work_score)
+# Players
+players = ["Ankush", "Aman", "Yogesh", "Jaspreet"]
 
-    # Compensation Score
-    job_salary = (job_salary_min + job_salary_max) / 2 + sign_on_bonus
-    preferred_min, preferred_max = provider_comp_range
-    if job_salary < preferred_min:
-        comp_score = 0
-    elif job_salary > preferred_max:
-        comp_score = 100
-    else:
-        comp_score = ((job_salary - preferred_min) / (preferred_max - preferred_min)) * 100
+# Page Config
+st.set_page_config(page_title="Hybrid Chess Tournament", layout="wide")
 
-    # Location Score
-    region_map = {
-        "WEST": ["California", "Oregon"],
-        "MIDWEST": ["Illinois", "Ohio"]
+ADMIN_PASSWORD = "chess123"
+
+# --- Load or Initialize Mongo Data ---
+def load_match_results():
+    match_structure = {
+        1: {"players": ["Ankush", "Aman"], "winner": ""},
+        2: {"players": ["Yogesh", "Jaspreet"], "winner": ""},
+        3: {"players": ["Ankush", "Yogesh"], "winner": ""},
+        4: {"players": ["Aman", "Jaspreet"], "winner": ""},
+        5: {"players": ["Ankush", "Jaspreet"], "winner": ""},
+        6: {"players": ["Aman", "Yogesh"], "winner": ""},
+        7: {"players": [], "winner": ""},  # Semi Final 1
+        8: {"players": [], "winner": ""},  # Semi Final 2
+        9: {"players": [], "winner": ""},  # Final
+        10: {"players": [], "winner": ""}, # Third Place
     }
-    provider_regions = set()
-    for region, states in region_map.items():
-        if any(state in provider_states for state in states):
-            provider_regions.add(region)
+    results = {i: {"match_id": i, **match_structure[i]} for i in match_structure}
+    for doc in results_col.find():
+        results[doc["match_id"]] = doc
+    return results
 
-    if job_state in provider_states:
-        loc_score = 100
-    elif job_region in provider_regions:
-        loc_score = 50
-    else:
-        loc_score = 0
+def load_scores():
+    scores = {name: 0 for name in players}
+    for doc in scores_col.find():
+        scores.update(doc.get("scores", {}))
+    return scores
 
-    # Values Score
-    matches = len(set(provider_values) & set(job_values))
-    value_score = {3: 100, 2: 66, 1: 33, 0: 0}[matches]
-
-    # Final Score
-    total_score = (
-        work_score * weights.get("Work-Life Balance", 0) +
-        comp_score * weights.get("Compensation", 0) +
-        loc_score * weights.get("Location", 0) +
-        value_score * weights.get("Values", 0)
+def save_result(match_id, match_data):
+    match_data = match_data.copy()
+    match_data["match_id"] = match_id
+    results_col.update_one(
+        {"match_id": match_id},
+        {"$set": match_data},
+        upsert=True
     )
 
-    breakdown = {
-        "Work-life balance": round(work_score),
-        "Compensation": round(comp_score),
-        "Location": round(loc_score),
-        "Values": round(value_score),
-        "Total": round(total_score)
-    }
+def save_scores(score_dict):
+    scores_col.update_one(
+        {"type": "score_data"},
+        {"$set": {"scores": score_dict}},
+        upsert=True
+    )
 
-    return breakdown
+def determine_finalists(scores):
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_four = sorted_scores[:4]
+    return [p[0] for p in top_four]
 
-# --------------------------------------------
-# Streamlit Layout
-# --------------------------------------------
-
-st.set_page_config(page_title="Job Match Calculator", layout="wide")
-st.markdown("<h1 style='text-align: center;'>Job Match Scoring Tool</h1>", unsafe_allow_html=True)
-
-col1, col2, col3 = st.columns([1.5, 1.5, 1])
-
-# --------------------------------------------
-# PROVIDER SECTION
-# --------------------------------------------
-with col1:
-    st.markdown("<h3 style='margin-bottom: 0.25rem;'>🔹 Provider Preferences</h3>", unsafe_allow_html=True)
-    with st.container():
-        st.markdown("<div >", unsafe_allow_html=True)
-
-        # Priority Ranking
-        st.markdown("<h5 style='margin-top: 0.5rem;'>🧠 Rank Your Priorities (Drag to Reorder)</h5>", unsafe_allow_html=True)
-        priority_items = ["Work-Life Balance", "Compensation", "Location", "Values"]
-        sorted_priorities = sort_items(priority_items, direction="vertical")
-        if sorted_priorities:
-            for i, item in enumerate(sorted_priorities, 1):
-                st.write(f"**{i}. {item}**")
-
-        # Compensation Range
-        st.markdown("<h5 style='margin-top: 1rem;'>💰 Preferred Compensation Range</h5>", unsafe_allow_html=True)
-        comp_range = st.slider(
-            "Select your expected compensation range:",
-            min_value=0, max_value=500000, value=(100000, 300000), step=5000, format="₹%d"
-        )
-        st.write(f"Selected range: ₹{comp_range[0]:,} – ₹{comp_range[1]:,}")
-
-        # Location
-        st.markdown("<h5 style='margin-top: 1rem;'>📍 Preferred Work Location(s)</h5>", unsafe_allow_html=True)
-        st.markdown("**WEST**")
-        west_ca = st.checkbox("California", key="west_ca")
-        west_or = st.checkbox("Oregon", key="west_or")
-
-        st.markdown("**MIDWEST**")
-        midwest_il = st.checkbox("Illinois", key="midwest_il")
-        midwest_oh = st.checkbox("Ohio", key="midwest_oh")
-
-        selected_states = []
-        if west_ca: selected_states.append("California")
-        if west_or: selected_states.append("Oregon")
-        if midwest_il: selected_states.append("Illinois")
-        if midwest_oh: selected_states.append("Ohio")
-
-        st.markdown(f"✅ Selected States: {', '.join(selected_states) if selected_states else 'None'}")
-
-        # Values
-        st.markdown("<h5 style='margin-top: 1rem;'>💡 Your Top 3 Personal Values</h5>", unsafe_allow_html=True)
-        value_options = [
-            "Integrity", "Collaboration", "Innovation",
-            "Compassion", "Accountability", "Diversity"
-        ]
-        selected_values = st.multiselect(
-            "Select exactly 3 values that matter most to you:",
-            options=value_options,
-            max_selections=3
-        )
-        if len(selected_values) != 3:
-            st.warning("⚠️ Please select exactly 3 values.")
-        else:
-            st.success(f"✅ You selected: {', '.join(selected_values)}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-# --------------------------------------------
-# RECRUITER SECTION
-# --------------------------------------------
-with col2:
-    st.markdown("### 🔸 Recruiter / Job Input")
-    with st.container():
-        st.markdown("<div >", unsafe_allow_html=True)
-
-        # Work-Life
-        st.markdown("<h5 style='margin-top: 0.5rem;'>🧘 Work-Life Balance</h5>", unsafe_allow_html=True)
-        job_hours = st.slider("Average hours/week", min_value=40, max_value=80, value=50, step=10)
-        job_weekend = st.checkbox("Weekend shifts?", key="job_weekend")
-        job_on_call = st.checkbox("On-call shifts?", key="job_on_call")
-
-        # Compensation
-        st.markdown("<h5 style='margin-top: 1rem;'>💰 Compensation</h5>", unsafe_allow_html=True)
-        salary_range = st.slider(
-            "Salary Range (Base)" ,
-            min_value=0 , max_value=500000 , value=(120000 , 180000) , step=5000 , format="₹%d"
-        )
-        salary_min , salary_max = salary_range
-        st.write(f"Selected range: ₹{salary_min:,} – ₹{salary_max:,}")
-        sign_on_bonus = st.number_input("Sign-on Bonus (if any)", min_value=0, max_value=100000, value=10000, step=1000)
-
-        # Location
-        st.markdown("<h5 style='margin-top: 1rem;'>📍 Job Location</h5>", unsafe_allow_html=True)
-        region_map = {
-            "WEST": ["California", "Oregon"],
-            "MIDWEST": ["Illinois", "Ohio"]
+# Load match_results from Mongo
+if "match_results" not in st.session_state:
+    match_docs = list(results_col.find())
+    if match_docs:
+        st.session_state.match_results = {
+            doc["match_id"]: {k: v for k, v in doc.items() if k not in ["_id", "match_id"]}
+            for doc in match_docs
         }
-
-        grouped_states = []
-        for region, states in region_map.items():
-            grouped_states.extend([f"{region} - {state}" for state in states])
-        selected_state_label = st.selectbox("Job State", options=grouped_states)
-        job_region, job_state = selected_state_label.split(" - ")
-        st.markdown(f"**Region auto-selected:** {job_region}")
-
-        # Values
-        st.markdown("<h5 style='margin-top: 1rem;'>🧠 Top 3 Job/Company Values</h5>", unsafe_allow_html=True)
-        job_values = st.multiselect(
-            "Select top 3 values for this job/company:",
-            options=value_options,
-            max_selections=3
-        )
-        if len(job_values) != 3:
-            st.warning("⚠️ Please select exactly 3 values.")
-        else:
-            st.success(f"✅ You selected: {', '.join(job_values)}")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-# --------------------------------------------
-# SCORE + SMART FIT PREVIEW
-# --------------------------------------------
-with col3:
-    st.markdown("### 🎯 Match Score")
-
-    if (
-        sorted_priorities and
-        len(selected_values) == 3 and
-        len(job_values) == 3 and
-        selected_states
-    ):
-        breakdown = calculate_match_score(
-            provider_priorities=sorted_priorities,
-            provider_comp_range=comp_range,
-            provider_states=selected_states,
-            provider_values=selected_values,
-            job_hours=job_hours,
-            job_weekend=job_weekend,
-            job_on_call=job_on_call,
-            job_salary_min=salary_min,
-            job_salary_max=salary_max,
-            sign_on_bonus=sign_on_bonus,
-            job_state=job_state,
-            job_region=job_region,
-            job_values=job_values
-        )
-        match_score = breakdown["Total"]
     else:
-        match_score = 0
-        breakdown = {
-            "Work-life balance": 0,
-            "Compensation": 0,
-            "Location": 0,
-            "Values": 0,
-            "Total": 0
-        }
+        st.session_state.match_results = load_match_results()
+        for mid, match in st.session_state.match_results.items():
+            results_col.insert_one({"match_id": mid, **match})
 
-    # Gauge
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=match_score,
-        title={'text': "Total Match Score", 'font': {'size': 20}},
-        gauge={
-            'axis': {'range': [0, 100]},
-            'bar': {'color': "darkblue"},
-            'steps': [
-                {'range': [0, 50], 'color': "lightgray"},
-                {'range': [50, 75], 'color': "gray"},
-                {'range': [75, 100], 'color': "lightgreen"}
-            ],
-        }
-    ))
-    st.plotly_chart(fig, use_container_width=True)
+# Load scores from Mongo
+if "scores" not in st.session_state:
+    scores_doc = scores_col.find_one({"type": "score_data"})
+    if scores_doc:
+        st.session_state.scores = scores_doc["scores"]
+    else:
+        default_scores = {name: 0 for name in players}
+        st.session_state.scores = default_scores
+        scores_col.insert_one({"type": "score_data", "scores": default_scores})
 
-    # Fit Breakdown
-    st.markdown("### 🧠 Smart Fit Preview")
-    st.success(f"✅ {match_score}% overall match")
-    st.write(f"• Work-life balance: **{breakdown['Work-life balance']}**")
-    st.write(f"• Compensation: **{breakdown['Compensation']}**")
-    st.write(f"• Location: **{breakdown['Location']}**")
-    st.write(f"• Values: **{breakdown['Values']}**")
+# --- Title ---
+st.markdown("<div style='text-align: center;'><h1>♟️ Chess Tournament: Ankush, Aman, Yogesh, Jaspreet</h1></div>", unsafe_allow_html=True)
+
+# --- Sidebar Admin Control ---
+with st.sidebar:
+    st.header("🔐 Admin Control")
+    password_input = st.text_input("Enter admin password to update results", type="password")
+    is_admin = password_input == ADMIN_PASSWORD
+    if is_admin:
+        st.success("Access granted: You can edit match results.")
+    else:
+        st.warning("Results are view-only unless you're admin.")
+
+# --- Load State ---
+m = st.session_state.match_results
+
+# --- Progression Logic for Semis and Final ---
+score_df = pd.DataFrame.from_dict(st.session_state.scores, orient="index", columns=["wins"]).reset_index()
+score_df.columns = ["name", "wins"]
+score_df = score_df.sort_values("wins", ascending=False)
+
+if all(m[i]["winner"] for i in range(1, 7)) and not m[7]["players"]:
+    top4 = determine_finalists(dict(zip(score_df["name"], score_df["wins"])))
+    m[7]["players"] = [top4[0], top4[3]]  # Semi 1: 1st vs 4th
+    m[8]["players"] = [top4[1], top4[2]]  # Semi 2: 2nd vs 3rd
+    save_result(7, m[7])
+    save_result(8, m[8])
+
+if m[7]["winner"] and m[8]["winner"] and not m[9]["players"]:
+    finalists = [m[7]["winner"], m[8]["winner"]]
+    losers = [p for p in m[7]["players"] + m[8]["players"] if p not in finalists]
+    m[9]["players"] = finalists       # Final
+    m[10]["players"] = losers         # Third Place Match
+    save_result(9, m[9])
+    save_result(10, m[10])
+
+# --- Layout Columns ---
+col1, col2, col3 = st.columns([1.5, 2, 2])
+
+# --- Column 1: Tournament Process ---
+with col1:
+    st.markdown("""
+    ### Process of Tournament
+    - **Group Stage**: Everyone plays each other once
+    - **Matches**:
+        - Match 1: Ankush vs Aman
+        - Match 2: Yogesh vs Jaspreet
+        - Match 3: Ankush vs Yogesh
+        - Match 4: Aman vs Jaspreet
+        - Match 5: Ankush vs Jaspreet
+        - Match 6: Aman vs Yogesh
+    - **Semi Final 1**: 1st vs 4th
+    - **Semi Final 2**: 2nd vs 3rd
+    - **Match 9**: Final (Winners of Semis)
+    - **Match 10**: 3rd Place Match (Losers of Semis)
+    """)
+
+# --- Winner Dropdowns ---
+for match_id in range(1, 11):
+    match = m[match_id]
+    if match["players"]:
+        if match["winner"]:
+            st.success(f"✅ Match {match_id} ({match['players'][0]} vs {match['players'][1]}) → Winner: {match['winner']}")
+        elif is_admin:
+            winner = st.selectbox(
+                f"Pick Winner of Match {match_id} ({match['players'][0]} vs {match['players'][1]})",
+                options=["Select"] + match["players"],
+                key=f"match_{match_id}"
+            )
+            if winner != "Select":
+                st.session_state.match_results[match_id]["winner"] = winner
+                st.session_state.scores[winner] += 1
+                save_result(match_id , st.session_state.match_results[match_id])
+                save_scores(st.session_state.scores)
+                st.rerun()
+
+# --- Column 2: Upcoming Matches ---
+with col2:
+    st.markdown("### 📅 Upcoming Matches")
+    upcoming = [
+        {"Match": f"Match {mid}", "Fixture": f"{match['players'][0]} vs {match['players'][1]}"}
+        for mid, match in m.items() if match["players"] and not match["winner"]
+    ]
+    if upcoming:
+        st.table(pd.DataFrame(upcoming).reset_index(drop=True))
+    else:
+        winner_name = m[9].get("winner")
+        if winner_name:
+            st.markdown(f"All matches completed. **Winner: {winner_name}** 🏆")
+        else:
+            st.markdown("All matches completed.")
+
+# --- Column 3: Scores ---
+with col3:
+    st.markdown("### 📊 Current Scores")
+
+    final_scores = {p: 0 for p in players}
+    for match in m.values():
+        winner = match.get("winner")
+        if winner:
+            final_scores[winner] += 1
+
+    def head_to_head(player1, player2):
+        for match in m.values():
+            if sorted(match.get("players", [])) == sorted([player1, player2]):
+                return match.get("winner")
+        return None
+
+    sorted_players = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+
+    i = 0
+    while i < len(sorted_players) - 1:
+        p1, w1 = sorted_players[i]
+        p2, w2 = sorted_players[i+1]
+        if w1 == w2:
+            winner = head_to_head(p1, p2)
+            if winner == p2:
+                sorted_players[i], sorted_players[i+1] = sorted_players[i+1], sorted_players[i]
+        i += 1
+
+    rank_data = [{"Rank": i+1, "Player": p, "Wins": final_scores[p]} for i, (p, _) in enumerate(sorted_players)]
+    st.table(pd.DataFrame(rank_data))
+
+# --- Full Match Flow ---
+st.markdown("---")
+st.markdown("## 🧾 Full Match Flow")
+flow = []
+for mid, match in m.items():
+    flow.append({
+        "Match": f"Match {mid}",
+        "Players": " vs ".join(match.get("players", [])),
+        "Winner": match.get("winner", "")
+    })
+st.dataframe(pd.DataFrame(flow), use_container_width=True)
