@@ -19,7 +19,7 @@ scores_col = db["player_scores"]
 players = [ "Aman", "Yogesh","Ankush", "Jaspreet"]
 
 # Page Config
-st.set_page_config(page_title="Hybrid Chess Tournament", layout="wide")
+st.set_page_config(page_title="Chess Tournament", layout="wide")
 
 ADMIN_PASSWORD = "chess123"
 
@@ -93,7 +93,7 @@ if "scores" not in st.session_state:
         scores_col.insert_one({"type": "score_data", "scores": default_scores})
 
 # --- Title ---
-st.markdown("<div style='text-align: center;'><h1>♟️ Chess Tournament: Ankush, Aman, Yogesh, Jaspreet</h1></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center;'><h1>♟️ Chess Tournament</h1></div>", unsafe_allow_html=True)
 
 # --- Sidebar Admin Control ---
 with st.sidebar:
