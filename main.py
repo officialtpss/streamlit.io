@@ -1,11 +1,16 @@
 import streamlit as st
 import pandas as pd
-from pymongo import MongoClient
+import pymongo
 
-# MongoDB Setup
-mongo_uri = "mongodb+srv://ankushkumartpss:0R2IwQeyjOywH91G@cluster0.iy27erl.mongodb.net/"
-client = MongoClient(mongo_uri)
+# Initialize MongoDB connection (runs only once)
+@st.cache_resource
+def init_connection():
+    return pymongo.MongoClient(st.secrets["mongo"]["host"])
+
+client = init_connection()
 db = client["chess_tournament"]
+
+# Access collections
 results_col = db["match_results"]
 scores_col = db["player_scores"]
 
