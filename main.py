@@ -16,7 +16,7 @@ results_col = db["match_results"]
 scores_col = db["player_scores"]
 
 # Players
-players = ["Ankush", "Aman", "Yogesh", "Jaspreet"]
+players = [ "Aman", "Yogesh","Ankush", "Jaspreet"]
 
 # Page Config
 st.set_page_config(page_title="Hybrid Chess Tournament", layout="wide")
