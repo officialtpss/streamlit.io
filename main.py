@@ -6,7 +6,7 @@ from pymongo import MongoClient
 # Initialize MongoDB connection (runs only once)
 @st.cache_resource
 def init_connection():
-    return MongoClient("mongodb+srv://st.secrets.db_username:st.secrets.db_pswd@st.secrets.cluster_name.st.secret.host")
+    return MongoClient("mongodb+srv://ankushkumartpss:0R2IwQeyjOywH91G@cluster0.iy27erl.mongodb.net/")
 
 client = init_connection()
 db = client["chess_tournament"]
