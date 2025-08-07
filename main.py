@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
-import pymongo
+from pymongo import MongoClient
+
 
 # Initialize MongoDB connection (runs only once)
 @st.cache_resource
 def init_connection():
-    return pymongo.MongoClient(st.secrets["mongo"]["host"])
+    return MongoClient("mongodb+srv://st.secrets.db_username:st.secrets.db_pswd@st.secrets.cluster_name.iy27erl.mongodb.net/")
 
 client = init_connection()
 db = client["chess_tournament"]
